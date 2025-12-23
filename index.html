@@ -147,7 +147,6 @@
             const [resultImage, setResultImage] = useState(null);
             const [statusMsg, setStatusMsg] = useState("");
 
-            // 圖片壓縮輔助函式
             const resizeImage = (file, maxWidth = 1024) => {
                 return new Promise((resolve) => {
                     const reader = new FileReader();
@@ -159,24 +158,21 @@
                             const canvas = document.createElement('canvas');
                             let width = img.width;
                             let height = img.height;
-
                             if (width > maxWidth) {
                                 height = (maxWidth / width) * height;
                                 width = maxWidth;
                             }
-
                             canvas.width = width;
                             canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(img, 0, 0, width, height);
-                            const dataUrl = canvas.toDataURL('image/png');
-                            resolve(dataUrl.split(',')[1]);
+                            resolve(canvas.toDataURL('image/png').split(',')[1]);
                         };
                     };
                 });
             };
 
-            const callGemini = async (personB64, itemB64, prompt) => {
+            const callGemini = async (personB64, itemB64, prompt, retryCount = 0) => {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`;
                 const payload = {
                     contents: [{
@@ -189,26 +185,31 @@
                     generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
                 };
                 
-                try {
-                    const response = await fetch(url, { 
-                        method: 'POST', 
-                        headers: { 'Content-Type': 'application/json' }, 
-                        body: JSON.stringify(payload) 
-                    });
-                    
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error?.message || `HTTP錯誤: ${response.status}`);
+                const response = await fetch(url, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify(payload) 
+                });
+                
+                if (response.status === 429) {
+                    if (retryCount < 3) {
+                        const waitTime = Math.pow(2, retryCount) * 2000;
+                        setStatusMsg(`⏳ 哎呀，大家都在排隊！AI 正在喘口氣，${Math.round(waitTime/1000)}秒後自動重試...`);
+                        await new Promise(r => setTimeout(r, waitTime));
+                        return callGemini(personB64, itemB64, prompt, retryCount + 1);
                     }
-                    
-                    const result = await response.json();
-                    const base64 = result.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-                    
-                    if (!base64) throw new Error("API 未傳回圖片。這通常是因為安全過濾器擋下了照片，請換一張試試！");
-                    return base64;
-                } catch (err) {
-                    throw err;
+                    throw new Error("免費額度暫時用完啦！請等 1 分鐘後再試。");
                 }
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || "網路有點問題");
+                }
+                
+                const result = await response.json();
+                const base64 = result.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+                if (!base64) throw new Error("AI 這次沒能變出圖片，請換張照片試試看！");
+                return base64;
             };
 
             const handleTryOn = async () => {
@@ -226,19 +227,16 @@
                 setResultImage(null);
                 
                 try {
-                    // 使用壓縮過的圖片 Base64
                     const pB64 = await resizeImage(personImage);
                     const iB64 = await resizeImage(itemImage);
-                    
                     const fitDesc = fitStyle === "tight" ? "extremely tight fit, showing fabric tension" : "cute natural fit";
-                    const prompt = `Virtual try-on: replace clothes on person in image 1 with clothing from image 2. Style: Japanese POP magazine photoshoot. Fit: ${fitDesc}. Keep original background and face perfectly. High fashion look.`;
+                    const prompt = `Virtual try-on: Fit clothing from image 2 onto person in image 1. Style: Japanese POP magazine photoshoot. Fit: ${fitDesc}. Vivid colors. Keep background and face identical.`;
                     
                     const base64 = await callGemini(pB64, iB64, prompt);
                     setResultImage(`data:image/png;base64,${base64}`);
                     setStatusMsg("🎉 完成！你看起來超棒的！");
                 } catch (e) { 
-                    console.error(e);
-                    setStatusMsg(`❌ 失敗了: ${e.message}`);
+                    setStatusMsg(`❌ ${e.message}`);
                 } finally { 
                     setIsGenerating(false); 
                 }
@@ -247,14 +245,12 @@
             return (
                 <div className={`min-h-full transition-all duration-500 ${isDark ? 'bg-pattern-night text-white' : 'bg-pattern-day text-black'} p-4 md:p-8 pb-20`}>
                     <div className="max-w-screen-sm mx-auto">
-                        
                         <header className="flex flex-row items-center justify-between mb-8 gap-4 pt-2">
                             <div className="relative">
                                 <h1 className={`text-5xl pop-title italic tracking-tighter ${isDark ? 'text-cyan-400' : 'text-pink-400'}`}>
                                     POP<span className={isDark ? 'text-purple-400' : 'text-yellow-400'}>Fit!</span>
                                 </h1>
                             </div>
-
                             <button 
                                 onClick={() => setIsDark(!isDark)}
                                 className={`flex items-center gap-2 px-4 py-2 clay-box btn-3d rounded-full transition-all ${isDark ? 'bg-purple-900 text-cyan-300 border-cyan-400 shadow-none' : 'bg-white text-pink-500 border-black'}`}
@@ -266,7 +262,6 @@
 
                         <main className="space-y-10">
                             <div className="space-y-10">
-                                {/* STEP 1 */}
                                 <div className="relative">
                                     <div className={`absolute -top-4 -left-2 z-10 px-4 py-1 clay-box text-xs font-black rotate-[-3deg] ${isDark ? 'bg-cyan-500 text-white' : 'bg-pink-400 text-white'}`}>
                                         STEP 01: YOU
@@ -286,7 +281,6 @@
                                     </div>
                                 </div>
 
-                                {/* STEP 2 & FIT */}
                                 <div className="space-y-6">
                                     <div className="flex gap-2">
                                         {['tight', 'natural', 'oversized'].map(s => (
@@ -303,7 +297,6 @@
                                             </button>
                                         ))}
                                     </div>
-
                                     <div className="relative">
                                         <div className={`absolute -top-4 -right-2 z-10 px-4 py-1 clay-box text-xs font-black rotate-[3deg] ${isDark ? 'bg-purple-500 text-white' : 'bg-yellow-400 text-black'}`}>
                                             STEP 02: OUTFIT
@@ -347,7 +340,6 @@
                                     <div className="absolute bottom-10 right-4 rotate-12">
                                         <Icons.Heart fill={isDark ? '#e879f9' : '#f472b6'} />
                                     </div>
-
                                     {resultImage ? (
                                         <div className="w-full space-y-8 animate-in zoom-in duration-500">
                                             <div className="relative group p-1 bg-black rounded-[2rem]">
@@ -380,7 +372,6 @@
                                         </div>
                                     )}
                                 </div>
-                                
                                 <div className={`mt-6 flex justify-between items-center px-4 py-2 rounded-full border-2 border-black ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white'}`}>
                                     <span className="font-black text-[8px] tracking-[0.2em] uppercase italic opacity-60">PopFit Ed.</span>
                                     <div className="flex gap-2">
@@ -390,7 +381,6 @@
                                 </div>
                             </div>
                         </main>
-
                         <footer className="mt-12 py-8 text-center border-t-4 border-black border-dashed opacity-30">
                             <p className="font-black text-xs tracking-[0.4em]">FASHIONFIT 2025</p>
                         </footer>
