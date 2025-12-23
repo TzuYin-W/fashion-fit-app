@@ -147,7 +147,8 @@
             const [resultImage, setResultImage] = useState(null);
             const [statusMsg, setStatusMsg] = useState("");
 
-            const resizeImage = (file, maxWidth = 1024) => {
+            // 將最大寬度限制降低到 768px 以減少額度消耗
+            const resizeImage = (file, maxWidth = 768) => {
                 return new Promise((resolve) => {
                     const reader = new FileReader();
                     reader.readAsDataURL(file);
@@ -192,23 +193,23 @@
                 });
                 
                 if (response.status === 429) {
-                    if (retryCount < 3) {
-                        const waitTime = Math.pow(2, retryCount) * 2000;
-                        setStatusMsg(`⏳ 哎呀，大家都在排隊！AI 正在喘口氣，${Math.round(waitTime/1000)}秒後自動重試...`);
-                        await new Promise(r => setTimeout(r, waitTime));
+                    if (retryCount < 2) {
+                        const waitSec = 15 * (retryCount + 1);
+                        setStatusMsg(`⏳ 免費額度限制中，正在排隊... ${waitSec} 秒後自動重試`);
+                        await new Promise(r => setTimeout(r, waitSec * 1000));
                         return callGemini(personB64, itemB64, prompt, retryCount + 1);
                     }
-                    throw new Error("免費額度暫時用完啦！請等 1 分鐘後再試。");
+                    throw new Error("今日免費額度已達上限或頻率過高，請稍等一分鐘後再試喔！");
                 }
                 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.error?.message || "網路有點問題");
+                    throw new Error(errorData.error?.message || "AI 忙碌中，請稍後再試");
                 }
                 
                 const result = await response.json();
                 const base64 = result.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-                if (!base64) throw new Error("AI 這次沒能變出圖片，請換張照片試試看！");
+                if (!base64) throw new Error("AI 暫時無法處理這張照片，換一張試試看！");
                 return base64;
             };
 
